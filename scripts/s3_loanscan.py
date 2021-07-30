@@ -60,23 +60,24 @@ def main():
 
             apy = vault.apy(samples)
             lend_rate_json = {"lendRates": []}
+            lend_rate_apy = apy.gross_apr
+            lend_rate_apr = ((apy.net_apy + 1)**(1/365) - 1) * 365
             if apy.type == 'crv':
                 for curve_pool_token_address in curve.get_underlying_coins(vault.token):
                     lend_rate_json["lendRates"].append({
-                        "apr": apy.net_apy,
-                        "apy": apy.gross_apr,
+                        "apr": lend_rate_apr,
+                        "apy": lend_rate_apy,
                         "tokenSymbol": Contract(curve_pool_token_address).symbol()
                     })
             else:
+                vault_token_symbol = vault.token.symbol() if hasattr(
+                    vault.token, "symbol") else None
                 lend_rate_json["lendRates"].append({
-                    "apr": apy.net_apy,
-                    "apy": apy.gross_apr,
-                    "tokenSymbol": vault.token.symbol() if hasattr(vault.token, "symbol") else None
+                    "apr": lend_rate_apr,
+                    "apy": lend_rate_apy,
+                    "tokenSymbol": vault_token_symbol
                 })
-
-            vault_symbol = vault.symbol if hasattr(
-                vault, "symbol") else vault.vault.symbol()
-            loanscan_vault_json.append((vault_symbol, lend_rate_json))
+            loanscan_vault_json.append([vault.vault.symbol(), lend_rate_json])
         except Exception as error:
             logger.info(
                 f'failed to reduce loanscan lendRate for vault {str(vault.vault)} {vault.vault.symbol()}')
@@ -88,6 +89,13 @@ def main():
     if os.path.isdir(loanscan_path):
         shutil.rmtree(loanscan_path)
     os.makedirs(loanscan_path, exist_ok=True)
+
+    try:
+        with open(os.path.join(loanscan_path, "manifest"), "w+") as f:
+            json.dump(loanscan_vault_json, f)
+    except Exception as error:
+        logger.info('failed to write loanscan manifest')
+        logger.error(error)
 
     for loanscan_vault in loanscan_vault_json:
         vault_symbol = loanscan_vault[0]
@@ -131,7 +139,7 @@ def with_monitoring():
     public_group = os.environ.get('TG_YFIREBOT_GROUP_EXTERNAL')
     updater = Updater(os.environ.get('TG_YFIREBOT'))
     now = datetime.now()
-    message = f"`[{now}]`\n⚙️ API is updating..."
+    message = f"`[{now}]`\n⚙️ Loanscan API is updating..."
     ping = updater.bot.send_message(
         chat_id=private_group, text=message, parse_mode="Markdown")
     ping = ping.message_id
@@ -140,12 +148,12 @@ def with_monitoring():
     except Exception as error:
         tb = traceback.format_exc()
         now = datetime.now()
-        message = f"`[{now}]`\n🔥 API update failed!\n```\n{tb}\n```"
+        message = f"`[{now}]`\n🔥 Loanscan API update failed!\n```\n{tb}\n```"
         updater.bot.send_message(
             chat_id=private_group, text=message, parse_mode="Markdown", reply_to_message_id=ping)
         updater.bot.send_message(chat_id=public_group,
                                  text=message, parse_mode="Markdown")
         raise error
-    message = "✅ API update successful!"
+    message = "✅ Loanscan API update successful!"
     updater.bot.send_message(
-        chat_id=private_group, text="✅ API update successful!", reply_to_message_id=ping)
+        chat_id=private_group, text="✅ Loanscan API update successful!", reply_to_message_id=ping)
