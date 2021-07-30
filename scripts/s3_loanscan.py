@@ -35,6 +35,15 @@ def get_assets_metadata(vault_v2: list) -> dict:
     return assets_metadata
 
 
+def write_json(json_dict: dict, path: str):
+    try:
+        with open(path, "w+") as f:
+            json.dump(json_dict, f)
+    except Exception as error:
+        logger.info(f'failed to write {path}')
+        logger.error(error)
+
+
 def main():
     samples = get_samples()
 
@@ -44,6 +53,7 @@ def main():
 
     assets_metadata = get_assets_metadata(registry_v2.vaults)
 
+    loanscan_vault_symbols = []
     loanscan_vault_json = []
     for vault in itertools.chain(special, registry_v1.vaults, registry_v2.vaults):
         try:
@@ -59,12 +69,12 @@ def main():
                 continue
 
             apy = vault.apy(samples)
-            lend_rate_json = {"lendRates": []}
             lend_rate_apy = apy.gross_apr
             lend_rate_apr = ((apy.net_apy + 1)**(1/365) - 1) * 365
+            lend_rates = []
             if apy.type == 'crv':
                 for curve_pool_token_address in curve.get_underlying_coins(vault.token):
-                    lend_rate_json["lendRates"].append({
+                    lend_rates.append({
                         "apr": lend_rate_apr,
                         "apy": lend_rate_apy,
                         "tokenSymbol": Contract(curve_pool_token_address).symbol()
@@ -72,12 +82,17 @@ def main():
             else:
                 vault_token_symbol = vault.token.symbol() if hasattr(
                     vault.token, "symbol") else None
-                lend_rate_json["lendRates"].append({
+                lend_rates.append({
                     "apr": lend_rate_apr,
                     "apy": lend_rate_apy,
                     "tokenSymbol": vault_token_symbol
                 })
-            loanscan_vault_json.append([vault.vault.symbol(), lend_rate_json])
+            vault_symbol = vault.vault.symbol()
+            loanscan_vault_symbols.append(vault_symbol)
+            loanscan_vault_json.append({
+                "symbol": vault_symbol,
+                "lendRates": lend_rates
+            })
         except Exception as error:
             logger.info(
                 f'failed to reduce loanscan lendRate for vault {str(vault.vault)} {vault.vault.symbol()}')
@@ -90,23 +105,12 @@ def main():
         shutil.rmtree(loanscan_path)
     os.makedirs(loanscan_path, exist_ok=True)
 
-    try:
-        with open(os.path.join(loanscan_path, "manifest"), "w+") as f:
-            json.dump(loanscan_vault_json, f)
-    except Exception as error:
-        logger.info('failed to write loanscan manifest')
-        logger.error(error)
-
+    write_json(loanscan_vault_symbols, os.path.join(loanscan_path, "manifest"))
+    write_json(loanscan_vault_json, os.path.join(loanscan_path, "all"))
     for loanscan_vault in loanscan_vault_json:
-        vault_symbol = loanscan_vault[0]
-        vault_json = loanscan_vault[1]
-        try:
-            with open(os.path.join(loanscan_path, vault_symbol), "w+") as f:
-                json.dump(vault_json, f)
-        except Exception as error:
-            logger.info(
-                f'failed to write loanscan lendRate for {vault_symbol}')
-            logger.error(error)
+        write_json({
+            "lendRates": loanscan_vault["lendRates"]
+        }, os.path.join(loanscan_path, loanscan_vault["symbol"]))
 
     aws_bucket = os.environ.get("AWS_BUCKET")
     s3 = boto3.client(
